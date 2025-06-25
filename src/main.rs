@@ -1,5 +1,12 @@
 use solana_program::{
-    account_info::{next_account_info, AccountInfo}, entrypoint::{self, ProgramResult}, msg, program::invoke_signed, program_error::ProgramError, pubkey::Pubkey, system_instruction
+    account_info::{next_account_info, AccountInfo},
+    entrypoint,
+    entrypoint::ProgramResult,
+    msg,
+    program::{invoke_signed},
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_instruction
 };
 
 entrypoint!(process_instruction);
@@ -55,5 +62,52 @@ fn withdraw_from_vault(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
     // Creates a mutable iterator to go through the list of accounts one by one.
     let accounts_iter = &mut accounts.iter();
 
-    
+    let owner = next_account_info(accounts_iter)?;
+    let vault_account = next_account_info(accounts_iter)?;
+    let recipient = next_account_info(accounts_iter)?; // who should received SOL from the wallet
+
+    // Calculates the expected PDA address using the seed "vault" and the program’s public key.
+    let (vault_pda, bump) = Pubkey::find_program_address(&[b"vault"], program_id);
+
+    if vault_pda != *vault_account.key {
+        msg!("Invalid vault PDA");
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    if !owner.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    let lamports = vault_account.lamports();
+
+    /*
+        safely borrow mutable reference of lamports of vault accounts
+        subtract all the lamports from the vault, set it to 0
+        Why **?
+        try_borrow_mut_lamports will return <&mut u64, ProgramError>
+        The first * dereferences the mutable reference: From &mut u64 → u64
+        The second * is used because you want to modify the actual value: You’re saying: “take the number inside this reference and subtract from it.”
+        
+        Can be understood as:Borrow the lamports value mutably, then directly subtract from the actual u64 value it points to.
+    */
+
+    /* 
+        let lamports_to_transfer = vault_account.lamports();
+
+        let mut vault_lamports = vault_account.try_borrow_mut_lamports()?;
+        let mut recipient_lamports = recipient.try_borrow_mut_lamports()?;
+
+        // Subtract from the vault
+        *vault_lamports -= lamports_to_transfer;
+
+        // Add to the recipient
+        *recipient_lamports += lamports_to_transfer;
+    */
+     
+    **vault_account.try_borrow_mut_lamports()? -= lamports;
+    **recipient.try_borrow_mut_lamports()? += lamports;
+
+    msg!("Withdrawn {} lamports to recipient address", lamports);
+
+    Ok(())
 }
